@@ -272,8 +272,8 @@ final class RemoteConnection {
                         }
                         channel.suspendWrites();
                     }
-                } catch (IOException e) {
-                    handleException(e, false);
+                } catch (Throwable e) {
+                    handleException(e instanceof IOException? (IOException) e : new IOException(e), false);
                     channel.wakeupReads();
                     while ((pooled = queue.poll()) != null) {
                         pooled.free();
@@ -284,30 +284,36 @@ final class RemoteConnection {
         }
 
         public void shutdownWrites() {
-            synchronized (queue) {
-                closed = true;
-                terminateHeartbeat();
-                final ConnectedMessageChannel channel = getChannel();
-                try {
-                    if (! queue.isEmpty()) {
-                        channel.resumeWrites();
-                        return;
-                    }
-                    channel.shutdownWrites();
-                    if (! channel.flush()) {
-                        channel.resumeWrites();
-                        return;
-                    }
-                    RemoteLogger.conn.logf(FQCN, Logger.Level.TRACE, null, "Shut down writes on channel");
-                } catch (IOException e) {
-                    handleException(e, false);
-                    channel.wakeupReads();
-                    Pooled<ByteBuffer> unqueued;
-                    while ((unqueued = queue.poll()) != null) {
-                        unqueued.free();
+            channel.getIoThread().execute(new Runnable() {
+                @Override
+                public void run() {
+
+                    synchronized (queue) {
+                        closed = true;
+                        terminateHeartbeat();
+                        final ConnectedMessageChannel channel = getChannel();
+                        try {
+                            if (! queue.isEmpty()) {
+                                channel.resumeWrites();
+                                return;
+                            }
+                            channel.shutdownWrites();
+                            if (! channel.flush()) {
+                                channel.resumeWrites();
+                                return;
+                            }
+                            RemoteLogger.conn.logf(FQCN, Logger.Level.TRACE, null, "Shut down writes on channel");
+                        } catch (Throwable e) {
+                            handleException(e instanceof IOException? (IOException) e : new IOException(e), false);
+                            channel.wakeupReads();
+                            Pooled<ByteBuffer> unqueued;
+                            while ((unqueued = queue.poll()) != null) {
+                                unqueued.free();
+                            }
+                        }
                     }
                 }
-            }
+            });
         }
 
         public void send(final Pooled<ByteBuffer> pooled, final boolean close) {
@@ -339,8 +345,8 @@ final class RemoteConnection {
                             if (empty) {
                                 channel.resumeWrites();
                             }
-                        } catch (IOException e) {
-                            handleException(e, false);
+                        } catch (Throwable e) {
+                            handleException(e instanceof IOException? (IOException) e : new IOException(e), false);
                             channel.wakeupReads();
                             Pooled<ByteBuffer> unqueued;
                             while ((unqueued = queue.poll()) != null) {
